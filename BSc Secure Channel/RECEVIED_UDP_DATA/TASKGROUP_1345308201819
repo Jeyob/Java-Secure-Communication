@@ -1,0 +1,10 @@
+module Evol where
+
+type AvstondsMatris = (String,String,Float)
+
+class Evol a where 
+	distance :: a -> a -> Float
+	getName :: a -> String
+	
+	distanceMatrix :: [a] -> [AvstondsMatris]
+	distanceMatrix a = [(getName x,getName y, distance x y)|x <- a,y <- a]

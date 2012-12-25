@@ -1,0 +1,308 @@
+package dkand12.Server.HandshakeContext.LoginContext;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.math.BigInteger;
+import java.security.AlgorithmParameters;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.spec.AlgorithmParameterSpec;
+import java.util.Arrays;
+import java.util.List;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.DHParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import org.bouncycastle.jce.ECNamedCurveTable;
+import org.bouncycastle.jce.spec.ECParameterSpec;
+import org.bouncycastle.util.encoders.Base64;
+
+import Communication.ChatClient;
+import dkand12.Client.LoginContext.StateContext;
+import dkand12.CryptographicFunctions.Public.publicCrypto;
+import dkand12.CryptographicFunctions.Public.publicCrypto.RSA;
+import dkand12.CryptographicFunctions.Symmetric.DH;
+import dkand12.CryptographicFunctions.Symmetric.DiffieHellman;
+import dkand12.CryptographicFunctions.Symmetric.EllipticCurveDiffieHellman;
+import dkand12.CryptographicFunctions.Symmetric.sCipher;
+import dkand12.Helpers.CipherIO;
+import dkand12.Helpers.Constants;
+import dkand12.Helpers.HelperMetods;
+import dkand12.Helpers.STATE;
+import dkand12.KeyManager.CipherSetup;
+
+public class server_keyAgreement extends StateContext {
+
+	
+	private DiffieHellman keyagreement = null;
+	private byte[] mutualSecret = null;
+	
+	
+	public server_keyAgreement(CipherIO cipherIO, CipherSetup setup) {
+		super(cipherIO, setup);
+		setState(new AWATING_DH_PARAMETERS());
+	}
+	
+	
+	/**
+	 * 
+	 * AWATING_DH_PARAMETERS
+	 * 
+	 * Before entering the keyexchange phases the required paramters must be received from client
+	 * 
+	 * Here we simply wait for the client parameter specs for the keyagreement
+	 * 
+	 * @author Jonas
+	 *
+	 */
+	
+	private final class AWATING_DH_PARAMETERS implements State {
+	
+
+		@Override
+		public boolean doPhase() {
+			AlgorithmParameterSpec algoSpec = null;
+			
+			List<byte[]> DH_params = receivePartie();
+			
+			System.out.println(DH_params.get(0)==null);
+			
+			if(setup.getKeyExchangeAlgorithm().equals("DH")) { /* if normal diffie hellman */
+			 
+				BigInteger p = new BigInteger(DH_params.get(0));
+				BigInteger g = new BigInteger(DH_params.get(1));
+				
+				algoSpec = new DHParameterSpec(p,g);
+
+				keyagreement = new DH(algoSpec);
+			}else if(setup.getKeyExchangeAlgorithm().equals("ECDH")) {
+			
+				algoSpec = ECNamedCurveTable.getParameterSpec(new String(DH_params.get(0))); 
+				keyagreement = new EllipticCurveDiffieHellman((ECParameterSpec)algoSpec);
+			}
+			else {
+				setState(new ERROR_EXIT("Unrecognized keyexchangealgorithm", true));
+				return false;
+			}
+			
+			 
+			 setState(new AWAIT_CLIENT_PUBLICPART());
+			return false;
+		}
+
+		@Override
+		public STATE getSTATE() {
+			return STATE.AWATING_DH_PARAMETERS;
+		}
+	}
+
+	/**
+	 * 
+	 * AWAIT_CLIENT_PUBLICPART
+	 * 
+	 * This state is reached after DH params from client has been received and initiated.
+	 * 
+	 * Here we wait for the public part of clients "DH-key"
+	 * @author Jonas
+	 *
+	 */
+	
+	private final class AWAIT_CLIENT_PUBLICPART implements State {
+
+		@Override
+		public boolean doPhase() {
+			
+			
+			List<byte[]> public_part = receivePartie();
+			
+			 
+			mutualSecret = keyagreement.generateMutulSecret(keyagreement, public_part.get(0), setup.getSymmetricKeyAlgorithm());
+			HelperMetods.print2console("Mutual secret created");
+			HelperMetods.printByteArray(mutualSecret);
+			
+			try {
+
+				byte[] digest_data = createDigest(keyagreement.getPublicKey().getEncoded(),public_part.get(0),setup.getRecipient_name().getBytes());
+				
+				byte[] signed_data = publicCrypto.encrypter(digest_data, setup.getMyPrivateKey(), setup.getPublicKeyAlgorithm(), RSA.NO_MODE, setup.getPublicPaddingAlgorithm());
+				
+				write2Partie(keyagreement.getPublicKey().getEncoded(), signed_data); /* server public part along with singed data for client to verify */
+				
+				setState(new AWATING_CLIENT_SIGNED());
+				
+			} catch (Exception e){
+				e.printStackTrace();
+				setState(new ERROR_EXIT(e.getMessage(), true));
+			}
+			
+			return false;
+		}
+		
+		
+		private byte[] createDigest(byte[]...params) throws NoSuchAlgorithmException, IOException{
+			
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			
+			
+			for(byte[] arg:params)
+				bos.write(arg);
+			
+			return MessageDigest.getInstance(setup.getHashAlgorithm()).digest(bos.toByteArray());
+			
+		}
+
+		@Override
+		public STATE getSTATE() {
+			return STATE.AWAIT_CLIENT_PUBLICPART;
+		}
+	}
+	
+	
+	/**
+	 * 
+	 * <p><b> AWATING_CLIENT_SIGNED </b></p>
+	 * 
+	 * <p><b>When:</b> This state is reached after server signed data has been sent to client</p>
+	 * 
+	 * Here the clients signed data is awaited upon. Upon arrival the different data shall be verified
+	 * 
+	 * @author Jonas
+	 *
+	 */
+	
+	private final class AWATING_CLIENT_SIGNED implements State {
+
+		@Override
+		public boolean doPhase() {
+			
+			List<byte[]> signed_data = receivePartie();
+			
+			try {
+				HelperMetods.printByteArray(signed_data.get(0));
+				
+				byte[] decrypted_data = publicCrypto.decrypter(signed_data.get(0), setup.getOtherPublicKey(), setup.getPublicKeyAlgorithm(), RSA.NO_MODE, setup.getPublicPaddingAlgorithm());
+				
+				if(verify(keyagreement.getEncodedExternalKey(),keyagreement.getPublicKey().getEncoded(),decrypted_data)) {
+					HelperMetods.print2console("DATA VERIFIED");
+					
+					sCipher dCipher = sCipher.getInstance(setup.getSymmetric_transformation());
+					sCipher eCipher = sCipher.getInstance(setup.getSymmetric_transformation());
+					
+//					AlgorithmParameters params = AlgorithmParameters.getInstance(setup.getSymmetricKeyAlgorithm());
+//			        params.init(signed_data.get(1));
+//			        
+//			        /****************** Session key ********************************/
+//					
+//					if(setup.getSymmetricKeyAlgorithm().equalsIgnoreCase("verman")){
+//						
+//						byte[] sessionkeybytes = new byte[128]; //1024 bits
+//						SecureRandom s = SecureRandom.getInstance("SHA1PRNG");
+//						s.nextBytes(sessionkeybytes);
+//						setup.setSessionKey(sessionkeybytes);
+//					
+//					}else { //if not verman
+//						KeyGenerator keygen = KeyGenerator.getInstance(setup.getSymmetricKeyAlgorithm());
+//						SecretKey sessionSecret = null;
+//						
+//						if(setup.getSymmetricKeySize()==Integer.MIN_VALUE)
+//							sessionSecret = keygen.generateKey();
+//						else { //specifed keysize
+//							keygen.init(setup.getSymmetricKeySize());
+//							sessionSecret = keygen.generateKey();
+//						}
+//					setup.setSessionKey(sessionSecret.getEncoded()); //set session key	
+//					}
+			        
+					dCipher.fromDHinit(sCipher.DECRYPT, mutualSecret , setup.getHashAlgorithm(), signed_data.get(1));
+					
+					List<byte[]> sessionspecific =	HelperMetods.unfoldMessage(dCipher.doFinal(signed_data.get(2))); /* (0) sessionkey (1) counter */
+
+//					SecretKeySpec secretKeySpec = new SecretKeySpec(sessionspecific.get(0), setup.getSymmetricKeyAlgorithm());
+					
+					setup.counter = new BigInteger(sessionspecific.get(1));
+					
+					setup.setSessionKey(sessionspecific.get(0)); /* sessionkey stores as raw bytes */
+					
+					eCipher.init(Cipher.ENCRYPT_MODE,setup.getSessionKey());
+					write2Partie(eCipher.getParameters(),eCipher.doFinal(Constants.KEY_EXCHANGE_SUCCESS.getBytes()));
+					
+					setState(new SUCCESS_EXIT());
+				}
+				else
+					setState(new ERROR_EXIT("Verification test failed", true));
+				
+			}catch(Exception e){
+				e.printStackTrace();
+				setState(new ERROR_EXIT(e.getMessage(), true));
+			}
+			
+			return false;
+		}
+
+		@Override
+		public STATE getSTATE() {
+			return STATE.AWATING_CLIENT_SIGNED;
+		}
+		
+		private boolean verify(byte[] otherKey,byte[] ourKey,byte[] digested_data) throws IOException, NoSuchAlgorithmException{
+			
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			MessageDigest digest = MessageDigest.getInstance(setup.getHashAlgorithm());
+			
+			bos.write(otherKey);
+			bos.write(ourKey);
+			bos.write(setup.getUsername().getBytes());
+			
+			byte[] compareDigest = digest.digest(bos.toByteArray());
+			
+			return Arrays.equals(compareDigest, digested_data);
+		}
+	}
+	
+	private final class ERROR_EXIT implements State {
+		
+		private String Error_msg = null;
+		private boolean send = true;
+		
+		public ERROR_EXIT(String msg, boolean send){
+			Error_msg = msg;
+			this.send = send;
+			
+		}
+		
+		@Override
+		public boolean doPhase() {
+			
+			HelperMetods.print2console(Error_msg);
+			
+			if(send)
+				write2Partie(Constants.END_CONNECTION.getBytes()); //tell server to end this connection attempt
+			
+			return true;
+		}
+
+		@Override
+		public STATE getSTATE() {
+			return STATE.ERROR_EXIT;
+		}
+	}
+	
+	private final class SUCCESS_EXIT implements State {
+
+		@Override
+		public boolean doPhase() {
+			return true;
+		}
+
+		@Override
+		public STATE getSTATE() {
+			return STATE.SUCCESS_EXIT;
+		}
+	}
+}

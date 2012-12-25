@@ -1,0 +1,44 @@
+Primers 
+
+Primers: är en region hos en gen som anger start och stopp. 
+		Vi kan använda oss av samma primers mellan två arter om deras gener använer samma primers.
+		Och om två gener delat en primer så betraktar vi dem som olika
+		
+		Primers: intervallet - [1..n] 
+		
+		
+		
+		
+Indata: En lista av gener och där vi anger vilka primers som generna kan använda.
+		Form: pri(gen, primers)
+		
+		Atom = gen
+		primers = [heltal]+
+		NOTERA: Enbart 1 primer ska väljas för varje gen. Och man kan utgå att varje gen har minst 1 primer att välja bland.	
+		
+Exempel på primers..
+
+pri(s3fg,[34, 555, 11])
+pri(sffhg,[34, 74, 73])
+pri(sfsf3fg,[243, 74, 73])
+pri(sgsdfg,[88, 33, 44])
+pri(asdf,[45, 666, 22])
+
+Villkorsprogrammering.
+
+fd_domain(+fdvariabel_list, +integer_list).
+fd_domain(?fdvariabel, +integer_list). <-------Användbar	
+%Den sätter ett villkor på att variabelerna i fd_listan enbart antar värden från int_list
+
+
+Jg,i = ska kolla om en gen använder en viss gen g och primer i.
+Man kan tilka detta som at vi skriver en funktion som kollar upp en gen g och dess lista över primers. Finns primer i med
+i denna lista så retunera en 1:a annars returnera en 0:a.
+
+Villkor att uppfylla
+
+	1. Ii>=J
+	
+	
+För att uppfylla villkoret Jg,i så måste vi göra rekursiva anrop tills vi har tomma listan!	
+		
