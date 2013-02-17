@@ -95,14 +95,13 @@ public abstract class DiffieHellman {
 				keyGen = KeyPairGenerator.getInstance(ALGORITHM, "BC");
 				keyGen.initialize(paramSpec);
 				
-				keyPair = keyGen.generateKeyPair();
-				
-				X509EncodedKeySpec x509spec = new X509EncodedKeySpec(keyPair.getPublic().getEncoded());
-				
-				publicKey = kf.generatePublic(x509spec);
+				keyPair = keyGen.generateKeyPair();				
 				
 				kAgreement = KeyAgreement.getInstance(ALGORITHM);
 				kAgreement.init(keyPair.getPrivate());
+				
+				X509EncodedKeySpec x509spec = new X509EncodedKeySpec(keyPair.getPublic().getEncoded());
+				publicKey = kf.generatePublic(x509spec);
 				
 				return returnCode.EXIT_SUCCESS;
 			

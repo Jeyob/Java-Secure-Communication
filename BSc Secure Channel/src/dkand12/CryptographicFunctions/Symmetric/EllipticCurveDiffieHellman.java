@@ -85,7 +85,7 @@ public class EllipticCurveDiffieHellman extends DiffieHellman {
 		}
 	}
 	
-	private static HashMap<Integer, String> curveNames = new HashMap<Integer, String>() {
+	public static HashMap<Integer, String> curveNames = new HashMap<Integer, String>() {
 		{
 			put(new Integer(192), "prime192v1");
 			put(new Integer(239), "prime239v1");
